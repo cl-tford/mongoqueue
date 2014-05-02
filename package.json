@@ -1,5 +1,6 @@
 {
   "name": "mongoqueue",
+  "version" : "0.0.1",
   "author": "Terry Ford",
   "dependencies": {
     "mongodb": "~1.4.3",
