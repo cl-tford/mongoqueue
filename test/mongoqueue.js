@@ -6,7 +6,7 @@ function toJSON(mongodoc) {
   return JSON.parse(JSON.stringify(mongodoc));
 }
 
-var testCollectionName = 'queue';
+var testCollectionName = 'testqueue';
 
 describe('MongoQueue', function() {
   after(function(done) {
@@ -24,7 +24,6 @@ describe('MongoQueue', function() {
 
   describe('enqueue', function() {
     var mongoQueue = new MongoQueue({
-//      collectionName : 'queue',
       collectionName : testCollectionName,
       criteria : {
         test : 'enqueue'
@@ -54,11 +53,16 @@ describe('MongoQueue', function() {
     it('should add a new element to the queue, when all goes well', function(done) {
       var testDoc = { a : 1 };
 
-      mongoQueue.enqueue(testDoc, function(err, docs) {
-        assert.deepEqual(toJSON(docs), toJSON([testDoc]), "Got the right insert");
+      mongoQueue.enqueue(testDoc, function(err, newLength) {
+        assert.equal(newLength, 1, "Got the right new length");
         mongoQueue.getCollection(function(err, collection) {
           collection.find(mongoQueue.getCriteria()).toArray(function(err, docs) {
-            assert.deepEqual(toJSON(docs), toJSON([testDoc]));
+            var queueArray = null;
+
+            assert.equal(docs.length, 1);
+            queueArray = docs[0][MongoQueue.getQueueField()];
+            assert.deepEqual(toJSON(queueArray), toJSON([testDoc]));
+            
             done();
           });
         });
@@ -69,20 +73,20 @@ describe('MongoQueue', function() {
 
   describe('dequeue', function() {
     var mongoQueue = new MongoQueue({
-      collectionName : 'queue',
+      collectionName : testCollectionName,
       criteria : {
         "test" : "dequeue"
       }
     });
-    var testDoc = null;
+    var testDoc = {a:1};
 
     beforeEach(function(done) {
       mongoQueue.getCollection(function(err, collection) {
-        var rawDoc = _.extend(mongoQueue.getCriteria(), {a:1});
+        var rawDoc = mongoQueue._newQueueDocument();
 
+        rawDoc[MongoQueue.getQueueField()].push(testDoc);
         assert.equal(err, null, "No error getting the collection");
         collection.insert(rawDoc, function(err, insertedDocs) {
-          testDoc = insertedDocs[0];
           assert.equal(err, null, "No error inserting the doc.");
           done();
         });
@@ -96,8 +100,12 @@ describe('MongoQueue', function() {
         mongoQueue.getCollection(function(err, collection) {
           assert.equal(err, null, "No error getting the collection afterwards");
           collection.find(mongoQueue.getCriteria()).toArray(function(err, docs) {
+            var queueArray = null;
+
             assert.equal(err, null, "No error getting the docs afterwards");
-            assert.deepEqual(toJSON(docs), [], "No more elements in the queue");
+            assert.equal(docs.length, 1, "Got only one doc");
+            queueArray = docs[0][MongoQueue.getQueueField()];
+            assert.deepEqual(queueArray, [], "No more elements in the queue");
             done();
           });
         });

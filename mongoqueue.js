@@ -5,10 +5,26 @@ var _        = require('underscore');
 var db = null;
 var connectionString = "mongodb://localhost:27017/test";
 
+var defaultCollectionName = 'queues';
+
+var queueField = "q";
+
+var enqueueUpdateTemplate = {
+  "$push" : {}
+};
+
+var dequeueUpdateTemplate = {
+  "$pop" : {}
+};
+
+dequeueUpdateTemplate.$pop[queueField] = -1; // Pop from front, aka "shift"
+
+var exists = {};
+
 var MongoQueue = classify({
   name : "MongoQueue",
   initialize : function(options) {
-    this._collectionName = options.collectionName;
+    this._collectionName = options.collectionName || defaultCollectionName;
     this._criteria = options.criteria || {};
     this._collection = null;
   },
@@ -24,6 +40,18 @@ var MongoQueue = classify({
         db = connection;
         callback(null, db);
       });
+    },
+    getQueueField : function() {
+      return queueField;
+    },
+    getEnqueueUpdate : function(document) {
+      var enqueueUpdate = _.extend({}, enqueueUpdateTemplate);
+      
+      enqueueUpdate.$push[this.getQueueField()] = document;
+      return enqueueUpdate;
+    },
+    getDequeueUpdate : function() {
+      return dequeueUpdateTemplate;
     }
   },
   instanceMethods : {
@@ -51,16 +79,88 @@ var MongoQueue = classify({
     },
     enqueue : function(document, callback) {
       var self = this;
-
+      var enqueueUpdate = MongoQueue.getEnqueueUpdate(document);
+      
       self.getCollection(function(err, collection) {
         if (err) {
           return callback(err);
         }
-        _.extend(document, self._criteria);
-        collection.insert(document, callback);
+        self._ensureExistence(function(err) {
+          if (err) {
+            return callback(err);
+          }
+          collection.findAndModify(
+            self.getCriteria,   // query
+            [[ "_id", "asc" ]], // sort
+            enqueueUpdate,      // update "doc"
+            {                   // options
+              "new" : true      // callback with the newest version.
+            },
+            function(err, newDocument) {
+              var newLength = null;
+              
+              if (err) {
+                return callback(err);
+              }
+              newLength = newDocument[MongoQueue.getQueueField()].length;
+              callback(null,  newLength);
+            }
+          );
+        });
       });
     },
     dequeue : function(callback) {
+      var self = this;
+      var dequeueUpdate = MongoQueue.getDequeueUpdate();
+      
+      self.getCollection(function(err, collection) {
+        if (err) {
+          return callback(err);
+        }
+        collection.findAndModify(
+          self._criteria,     // query
+          [[ '_id', 'asc' ]], // sort
+          dequeueUpdate,      // update "doc"
+          { new : false },    // options : return old version.
+          function(err, oldDocument) {
+            var result = null;
+
+            if (err) {
+              return callback(err);
+            }
+            result = oldDocument[MongoQueue.getQueueField()][0];
+            callback(null, result);
+          }
+        );
+      });
+    },
+    _ensureExistence : function(callback) {
+      var self = this;
+      var existenceKey = self._makeExistenceKey();
+      
+      if (exists[existenceKey]) {
+        return callback(null);
+      }
+      self._findOrCreate(function(err, queueDocument) {
+        var queueDocumentId = null;
+        
+        if (err) {
+          return callback(err);
+        }
+        queueDocumentId = queueDocument._id;
+        exists[existenceKey] = queueDocumentId;
+        callback(null, queueDocumentId);
+      });
+    },
+    _makeExistenceKey : function() {
+      var keyObject = {
+        collectionName : this._collectionName,
+        criteria       : this._criteria
+      };
+
+      return JSON.stringify(keyObject);
+    },
+    _findOrCreate : function(callback) {
       var self = this;
 
       self.getCollection(function(err, collection) {
@@ -68,17 +168,27 @@ var MongoQueue = classify({
           return callback(err);
         }
         collection.findAndModify(
-          self._criteria,
-          [[ '_id', 'asc' ]],
-          {},
-          { remove : true },
-          function(err, modified) {
-            callback(err, modified);
-          }
+          { test : "enqueue" }, // query
+          [[ "_id", "asc" ]],   // sort
+          {                     // update "doc:"
+            "$setOnInsert" : self._newQueueDocument()
+          },                 
+          {                     // options
+            upsert : true,
+            "new"    : true // Return newly-inserted doc.
+          },
+          callback
         );
       });
-    }    
+    },
+    _newQueueDocument : function() {
+      var newQueueDocument = _.extend({}, this.getCriteria());
+      
+      newQueueDocument[MongoQueue.getQueueField()] = [];
+      return newQueueDocument;
+    }
   }
 });
 
 module.exports = MongoQueue;
+                          
