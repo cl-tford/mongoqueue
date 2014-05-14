@@ -9,6 +9,9 @@ var defaultCollectionName = 'queues';
 
 var queueField = "q";
 
+var queueFields = {};
+queueFields[queueField] = 1;
+
 var enqueueUpdateTemplate = {
   "$push" : {}
 };
@@ -44,6 +47,9 @@ var MongoQueue = classify({
     getQueueField : function() {
       return queueField;
     },
+    getQueueFields : function() {
+      return queueFields;
+    },
     getEnqueueUpdate : function(document) {
       var enqueueUpdate = _.extend({}, enqueueUpdateTemplate);
       
@@ -77,6 +83,32 @@ var MongoQueue = classify({
         });
       });
     },
+    checkQueue : function(callback) {
+      var self = this;
+
+      self.getCollection(function(err, collection) {
+        if (err) {
+          return callback(err);
+        }
+        self._ensureExistence(function(err) {
+          collection.findOne(
+            self.getCriteria(),
+            MongoQueue.getQueueFields(),
+            function(err, queueDocument) {
+              var queueArray = null;
+              var queueTop = null;
+              
+              if (err) {
+                return callback(err);
+              }
+              queueArray = queueDocument[MongoQueue.getQueueField()];
+              queueTop = queueArray[queueArray.length - 1];
+              callback(null, queueTop);
+            }
+          );          
+        });  
+      });
+    },
     enqueue : function(document, callback) {
       var self = this;
       var enqueueUpdate = MongoQueue.getEnqueueUpdate(document);
@@ -89,8 +121,10 @@ var MongoQueue = classify({
           if (err) {
             return callback(err);
           }
+console.log("Inside /Users/terranceford/vagrant/src/mongoqueue/mongoqueue.js.enqueue, about to collection.findAndModify, with criteria:\n", self.getCriteria());
           collection.findAndModify(
-            self.getCriteria,   // query
+//            self.getCriteria,   // query
+            self.getCriteria(), // query
             [[ "_id", "asc" ]], // sort
             enqueueUpdate,      // update "doc"
             {                   // options
